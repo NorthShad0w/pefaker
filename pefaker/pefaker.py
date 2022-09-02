@@ -1,135 +1,154 @@
-from PIL import Image
-import lief
+#!/usr/bin/env python
+
+# pip install pe_tools lief 
+# debian:
+# sudo apt install mingw-w64 
+# centos:
+# sudo dnf install mingw-w64 
+
+# Usage: python pefaker/pefaker.py
+
 import sys
-import numpy as np
-
-# for debug nice print
-np.set_printoptions(formatter={'int': hex})
-
-# convert png to ico
-def parse_png(png_location, out_put_location, height: int, width: int):
-    img = Image.open(png_location).resize((height, width))
-    saved_filename = out_put_location + f"{height}-{width}.ico"
-    img.save(saved_filename, size=[(height, width)])
-    return saved_filename
-
-# get a ResourceIcon class template
-def get_icon_template():
-    binary = lief.parse("test/calc.exe")
-    return binary.resources_manager.icons[0]
-
-# sync properties
-def set_up_new_icon_by_old_icon(icon,icon_template):
-    new_icon = icon_template
-    new_icon.bit_count = icon.bit_count
-    new_icon.color_count = icon.color_count
-    new_icon.height = icon.height
-    new_icon.id = icon.id
-    new_icon.lang = icon.lang
-    new_icon.planes = icon.planes
-    new_icon.sublang = icon.sublang
-    new_icon.width = icon.width
-    return new_icon
+import os
+import lief
+import grope
+from pe_tools.pe_parser import parse_pe, IMAGE_DIRECTORY_ENTRY_RESOURCE
+from pe_tools.rsrc import pe_resources_prepack, parse_prelink_resources, KnownResourceTypes
 
 
-def change_pe_resource(origin_pe, modified_pe, png_location):
+class Version:
+    def __init__(self, s):
+        parts = s.split(',')
+        if len(parts) == 1:
+            parts = parts[0].split('.')
+        self._parts = [int(part.strip()) for part in parts]
+        if not self._parts or len(self._parts) > 4 or any(part < 0 or part >= 2**16 for part in self._parts):
+            raise ValueError('invalid version')
+
+        while len(self._parts) < 4:
+            self._parts.append(0)
+
+    def get_ms_ls(self):
+        ms = (self._parts[0] << 16) + self._parts[1]
+        ls = (self._parts[2] << 16) + self._parts[3]
+        return ms, ls
+
+    def format(self):
+        return ', '.join(str(part) for part in self._parts)
+
+RT_VERSION = KnownResourceTypes.RT_VERSION
+RT_MANIFEST = KnownResourceTypes.RT_MANIFEST
+
+
+def parse_input_file(origin_pe):
+    fin = open(origin_pe, 'rb')
+    pe = parse_pe(grope.wrap_io(fin))
+    resources = pe.parse_resources()
+
+    if resources is None:
+        resources = {}
+
+    return pe, resources
+
+
+def clear_all_resources(resources):
+    resources = {k: v for k, v in resources.items() if k == RT_MANIFEST}
+
+    return resources
+
+
+def add_pdf_icon(res_file, resources):
+    res_fin = open(res_file, 'rb')
+    # must not close res_fin until the ropes are gone
+
+    r = parse_prelink_resources(grope.wrap_io(res_fin))
+    for resource_type in r:
+        for name in r[resource_type]:
+            for lang in r[resource_type][name]:
+                resources.setdefault(resource_type, {}).setdefault(
+                    name, {})[lang] = r[resource_type][name][lang]
+
+    return resources
+
+
+def change_pe_resource(origin_pe, modified_pe):
     binary = lief.parse(origin_pe)
     if binary.has_resources:
         print("binary has resources, proceed.")
     else:
         sys.exit(1)
 
-    root = binary.resources
-
-    # ico_nodes = root.childs[0].childs
-
-    # f =  open(ico_location,"rb")
-    # ico_b = f.read()
-    # for i in ico_nodes:
-    #     i.childs[0].content = list(ico_b)
-    # f.close()
-
-    # TODO 判断给定图像和原来的大小
-    # TODO 原本无icon的exe加icon
-
     resources_manager = binary.resources_manager
-    icon_template = get_icon_template()
-    if resources_manager.has_icons:
-        print("the pe itself has icon")
-        icon_group = root.childs[1].childs[0].childs[0].content
-        for icon in resources_manager.icons:
-            # handle the situation height == 256 (0)
-            if icon.height == 0:
-                print(icon.id,icon.height,icon.width)
-                new_icon = set_up_new_icon_by_old_icon(icon,icon_template)
-                new_ico_location = parse_png(png_location,"test/",256,256)
-            else:
-                print(icon.id,icon.height,icon.width)
-                new_icon = set_up_new_icon_by_old_icon(icon,icon_template)
-                new_ico_location = parse_png(png_location,"test/",new_icon.height,new_icon.width)
-
-            with open(new_ico_location, "rb") as f:
-                ico_bytes = f.read()
-                print(len(list(ico_bytes)),len(icon.pixels))
-                new_icon.pixels = list(ico_bytes)
-            
-            print(icon.id, new_icon.id)
-            resources_manager.change_icon(icon,new_icon)
-            # restore icon group
-            root.childs[1].childs[0].childs[0].content = icon_group
-    else:
-        print("the pe don't have icon")
-        resources_manager.add_icon(icon_template)
-
-
-
-
-    manifest = resources_manager.manifest
-
-    resources_manager.manifest = manifest
+    resources_manager.manifest = """<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
+<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level='asInvoker' uiAccess='false' />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+"""
 
     builder = lief.PE.Builder(binary)
     builder.build_resources(True)
 
     builder.build()
     builder.write(modified_pe)
-    return 0
 
+def compile_res_file(ico_file):
+    rc_content = f"""ICON1               ICON                    "{ico_file}"
+    """
+    with open("test/pdf.rc","w") as f:
+        f.write(rc_content)
 
-def change_pe_menifest_infomation(origin_pe, modified_pe, new_author, new_creation_time, new_last_modify_time):
-    binary = lief.parse(origin_pe)
+    print("rc file writen.")
 
-    builder = lief.PE.Builder(binary)
+    # install 
+    # sudo apt install mingw-w64 / sudo dnf install mingw-w64 
+    os.system("x86_64-w64-mingw32-windres -r -i test/pdf.rc -o test/newpdf.res")
+    print("res file generated")
 
-    builder.build()
-    builder.write(modified_pe)
-    return 0
-
-
-def change_pe_signature():
-
-    return 0
-
+    res_file = "test/newpdf.res"
+    return res_file
 
 def main():
     # set up test arguments here
-    origin_pe = "test/no.exe"
-    modified_pe = "test/new.exe"
+    origin_pe = "test/calc.exe"
+    modified_pe = "test/newcalc.exe"
 
-    png_location = "test/PDF-origin.png"
+    # TODO generate xxx.res with xxx.ico file
 
-    new_author = "administrator00001"
-    new_creation_time = "2000.01.01"
-    new_last_modify_time = "2000.01.01"
+    ico_file = "test/PDF.ico"
 
-    # result = parse_png("test/PDF-origin.png", "test/", 48,48)
-    # print(result)
-    change_pe_resource(origin_pe,
-                       modified_pe, png_location)
-    # change_pe_meta_infomation(
-    #     origin_pe, modified_pe, new_author, new_creation_time, new_last_modify_time)
-    # change_pe_menifest_infomation()
-    # change_pe_signature()
+    # res_file = "test/pdf.res"
+    res_file = ""
+
+    if len(res_file) == 0:
+        print("res file not defined")
+        if len(ico_file) > 0 :
+            res_file = compile_res_file(ico_file)
+
+    # new_author = "administrator00001"
+    # new_creation_time = "2000.01.01"
+    # new_last_modify_time = "2000.01.01"
+
+    pe, resources = parse_input_file(origin_pe)
+
+    modified_resources = clear_all_resources(resources)
+
+    modified_resources = add_pdf_icon(res_file, modified_resources)
+
+    prepacked = pe_resources_prepack(modified_resources)
+    addr = pe.resize_directory(IMAGE_DIRECTORY_ENTRY_RESOURCE, prepacked.size)
+    pe.set_directory(IMAGE_DIRECTORY_ENTRY_RESOURCE, prepacked.pack(addr))
+
+    with open(modified_pe, 'wb') as fout:
+        grope.dump(pe.to_blob(), fout)
+
+    change_pe_resource(modified_pe, modified_pe)
+    print("finished:", modified_pe)
 
 
 if __name__ == '__main__':
