@@ -205,10 +205,6 @@ def compile_res_file(ico_file):
     return res_file
 
 def gather_file_info_win(binary):
-        """
-        Borrowed from BDF...
-        I could just skip to certLOC... *shrug*
-        """
         flItms = {}
         binary = open(binary, 'rb')
         binary.seek(int('3C', 16))
@@ -301,7 +297,7 @@ def signfile(exe, sigfile):
     
     cert = open(sigfile, 'rb').read()
 
-    output = str(exe) + "_signed"
+    output = str(exe) + "_signed.exe"
 
     shutil.copy2(exe, output)
     
@@ -356,9 +352,6 @@ def main():
                     "LegalCopyright": LegalCopyright,
                     "OriginalFilename": origin_file_name,
                     "ProductName":ProductName}
-
-    # new_creation_time = "2000.01.01"
-    # new_last_modify_time = "2000.01.01"
 
     pe, modified_resources = parse_input_file(origin_pe)
 
