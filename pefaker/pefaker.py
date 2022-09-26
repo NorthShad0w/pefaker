@@ -332,13 +332,12 @@ def main():
             res_file = compile_res_file(ico_file)
     
     # fake_signature_file_here
-    fake_signature = "test/microsoft.fake.sig"
+    fake_signature = "test/microsoft.fake.sig" # test/tencent.fake.sig
 
     # args_here
     file_version = "1.0.0.1"
     product_version = "1.0.0.2"
     file_description = "fake_file_for_test"
-    InternalName = "CALCFAKE"
     CompanyName = "Microsoft Corporation fake"
     LegalCopyright = "©Microsoft Corporation. All rights reserved. fake"
     origin_file_name = "calc.exe"
@@ -347,7 +346,6 @@ def main():
     values_to_set = {"FileVersion": file_version,
                     "ProductVersion": product_version,
                     "FileDescription": file_description,
-                    "InternalName": InternalName,
                     "CompanyName": CompanyName, 
                     "LegalCopyright": LegalCopyright,
                     "OriginalFilename": origin_file_name,
